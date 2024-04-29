@@ -11,3 +11,8 @@ The notebook 2.MotivatingExample.ipynb is self-contained. The code is written in
 
 ## 5. Numerical Integrators and 6. Numerical Experiments
 Those sections use code written in C++ to generate results. The notebooks 5.NumericalIntegrators.ipynb and 6.NumericalExperiments.ipynb contains Python code to plot the generated results. The notebooks also contain information on how to run the C++ code. If the user simply runs the notebook, the results plotted will use the data used for the paper. If the user wishes to use the data they generated, then they need to comment out the path where indicated in the Notebook. Please note that the parallel environment used in the C++ code is openmp, which needs to be installed, see <https://www.openmp.org/>.
+
+## Structure of the folder
+- Cfiles contains the c++ files required to obtain the results plotted in 5.NumericalIntegrators.ipynb and 6.NumericalExperiments.ipynb. It also contains a folder data which contains the data produced by the c++ files. 
+- data_prerun contains folders with the data produced to obtain the results in the paper. 
+- figures contain the figures produced by the notebooks. 
