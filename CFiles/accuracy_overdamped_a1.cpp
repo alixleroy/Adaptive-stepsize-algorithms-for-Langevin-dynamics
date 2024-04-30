@@ -46,7 +46,7 @@ using namespace std;
 //
 // Defined fixed parameters 
 //
-#define numsam          100000          // number of sample
+#define numsam          100 //000          // number of sample
 #define m               0.001           // lower bound for the monitor function
 #define M               1.5             // upper bound for the monitor function
 #define T               100             // final time for all simulations 

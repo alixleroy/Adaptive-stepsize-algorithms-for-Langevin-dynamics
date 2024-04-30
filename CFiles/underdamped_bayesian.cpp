@@ -1,9 +1,26 @@
 
-// Spring potential 
-// v2 implies BAOAB with \nabla g computed in step O
-// AND fixed point integration for step A
+/* This code produces results on the accuracy results found in figure 10. It implements the 
+   IP-transformed underdamped Langevin dynamic with the two numerical integration methods and the 
+   original BAOAB method. 
+   It uses the numerical method: \tilde{B}\tilde{A}\tilde{O}\tilde{A}\tilde{B} and the method 
+    \hat{B}\hat{A}\hat{O}\hat{A}\hat{B}.
+   It runs the code for the Bayesian model, and compute the number of escaping trajectories.
+   To run the code, install fopenmp as per Readme instructions.
+   This code contains: 
+   - Definition of fixed parameters
+   - Definition of the functions: 
+        * Up: the derivative of the potential defined in (6.1) 
+        * getg: the monitor function defined in (6.2)
+        * getgprime: the derivative of the above monitor function 
+        * n_escp: numerical integrator method of BAOAB
+        * n_escp_tr_B: numerical integrator method of \hat{B}\hat{A}\hat{O}\hat{A}\hat{B}
+        * n_escp_tr_O: numerical integrator method of \tilde{B}\tilde{A}\tilde{O}\tilde{A}\tilde{B}
+        * main: run the algorithms and save the results of the moments
+*/
 
-
+//
+// Include required packages 
+//
 
 #include <cstring>
 #include <stdio.h>
@@ -22,38 +39,28 @@
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/multi_array.hpp>
 #include <chrono>
-
 using namespace std::chrono;
- 
 using namespace std;
 
+//
+// Defined fixed parameters 
+//
 
 #define gamma           0.1            // friction coefficient
-#define tau             1.            // 'temperature'
+#define tau             1.             // 'temperature'
 #define Nt              100000         // Number of steps forward in time
-#define numsam          100000       // total number of trajectories
+#define numsam          1000         // total number of trajectories
+#define printskip       1		       // skip this number when saving final values of the vector (should be high as we can't save 10^7 traj) vector
+#define printskip2	    100		       // use every printskip2 val in a trajectory for the computation of the observable, burnin is 10 000
+#define burnin          1000           // number of values to skip before saving observable
+#define tolA            1e-12          // the tolerance on the fixed point integration in step A
+#define nmax            100            // the maximum number of steps
 
-#define printskip       1		// skip this number when saving final values of the vector (should be high as we can't save 10^7 traj) vector
-#define printskip2	    100		// use every printskip2 val in a trajectory for the computation of the observable, burnin is 10 000
-#define burnin          1000   // number of values to skip before saving observable
-#define tolA            0.000000001
-#define nmax            50
-///////////////////// DEFINE POTENTIAL //////////////////////////////
+//
+// Bayesian potential (6.1)  
+//
 
-
-
-
-
-/////////////////////////////////////////////////////////////
-/////////////////// BAYESIAN //////////////////////////////
-/////////////////////////////////////////////////////////////
-//#define PATH "./pot_ben"
-#define PATH   "/home/s2133976/OneDrive/ExtendedProject/Code/Stepupyourgame/Stepupyourgame/data/C/underdamped/bayesian_plots";
-
-// vector<double> dtlist ={0.5   , 0.4789, 0.4579, 0.4368, 0.4158, 0.3947, 0.3737, 0.3526,
-//        0.3316, 0.3105, 0.2895, 0.2684, 0.2474, 0.2263, 0.2053, 0.1842,
-//        0.1632, 0.1421, 0.1211, 0.1};
-
+#define PATH   "./data/bayesian_escaping";
 vector<double> dtlist = {0.5  , 0.474, 0.448, 0.423, 0.397, 0.371, 0.345, 0.319, 0.294,
        0.268, 0.242, 0.216, 0.191, 0.165, 0.139, 0.113, 0.087, 0.062,
        0.036, 0.01};
@@ -68,12 +75,38 @@ vector<double> dtlist = {0.5  , 0.474, 0.448, 0.423, 0.397, 0.371, 0.345, 0.319,
 
 double Up(double x)
 {
+    /*
+    Defined the derivative of the modified harmonic potential (6.1):
+        V' (\mu)&= -\left({\sum}_{i=1}^{N} y_i - N \mu - 2 K(\mu-a)^{2 K -1}\right).
+    Input
+    -----
+    x: double 
+        value of the position
+
+    Return
+    ------
+    U'(x): double
+        value of the derivative of the potential in x.
+    */
     double res =-(sumX-N*x-2.*K*pow(x-a,2.*K-1.));
     return res;
 }
 
 double getg(double x)
 {
+    /*
+    Defines the monitor function based on (6.2).
+    
+    Input
+    -----
+    x: double 
+        value of the position
+
+    Return
+    ------
+    g(x): double
+        value of the monitor function in x.
+    */
     double f,f2,xi,den,g;
     f=pow(x-a-0.5*(sumX/N-a),2.)*r;
     f2=f*f;
@@ -85,6 +118,19 @@ double getg(double x)
 
 double getgprime(double x)
 {
+    /*
+    Defines the monitor function based on (6.2).
+    
+    Input
+    -----
+    x: double 
+        value of the position
+
+    Return
+    ------
+    g(x): double
+        value of the monitor function in x.
+    */
     double f,f2,xi,fp,gp,sqf; 
     f=pow(x-a-0.5*(sumX/N-a),2.)*r;
     f2=f*f;
@@ -95,37 +141,59 @@ double getgprime(double x)
     return(gp);
     }
 
+//
+// Numerical integrator BAOAB for the system (1.1)
+//
 
-
-/////////////////////////////////
-// Non adaptive one step function //
-/////////////////////////////////
-
-double one_step(double dt, double numruns, int i)
+double n_escp(double dt, double numruns, int i)
 {
-    //tools for sampling random increments
-    random_device rd1;
-    boost::random::mt19937 gen(rd1());
+    /*
+    This function implements the numerical integrator BAOAB, and save the values of the chain 
+    of the position and the momentum in a file "data/vec_noada_qi=j.txt" and "data/vec_noada_pi=j.txt"
+    where j is the index of the stepsize used to obtain the samples in the list 
+    dtlist. This function saves: 
+     - "./data/bayesian_escaping/vec_noada_qi=j.txt"
+     - "./data/bayesian_escaping/vec_noada_pi=j.txt"
+     which are the values of the respectively of a number of numsam/printskip values of the 
+     position and the momentum at time T, for the stepsize at index j in the list of stepsize
+     dtlist.
 
-    // set variables
+     
+
+    Input
+    -----
+    dt: double
+        value of the stepsize
+    numruns: double 
+        number of runs for one trajectory
+    i: int
+        the index of the stepsize in the list of stepsize dtlist
+    Return
+    ------
+    nsp2: int
+        The value of the number of of escaping trajectories. 
+    */
+    random_device rd1; //tool for random number generation
+    boost::random::mt19937 gen(rd1()); //tool for random number generation
+
+    // set up variables type
     double q,p,f,g,gp,gdt,C;
     int ns,nt,nsp,nsp2;
-    // Save the values 
+    // Empty vector to save the values
     vector<double> vec_q(numsam/printskip,0);
     vector<double> vec_p(numsam/printskip,0);
-
-    // Compute the moments, so its done
+    // Set up iterators
     nsp=0;
     nsp2=0;
+    //the following pragma command allow the compiler to run the code in parallel
     #pragma omp parallel private(q,p,f,C,nt) shared(ns,vec_q,vec_p,nsp,nsp2)
     #pragma omp for
     for(ns = 0; ns<numsam; ns++){
-        // Normal generator 
-        mt19937 generator(rd1());
-        normal_distribution<double> normal(0, 1);
-        q = 1.23;
-        p = 0.;
-        f = -Up(q);  
+        mt19937 generator(rd1()); // Normal generator 
+        normal_distribution<double> normal(0, 1); // Normal generator 
+        q = 1.23; //initial position
+        p = 0.; //initial momentum
+        f = -Up(q);   //initial value of the force
         for(nt = 0; nt<numruns; nt++)
         {
             //
@@ -160,12 +228,13 @@ double one_step(double dt, double numruns, int i)
             p += 0.5*dt*f;
 
         }
-
+    // if the value of the position is NaN (escaping trajectory)
+    // then add one to the counter of number of escaping trajectory
 	if(isnan(q)==true){
 	 nsp2+=1;
 	}
 
-    // Save every printskip values    
+    // Save every printskip values of the final generated vector    
     if(ns%printskip==0){
         vec_q[nsp]=q;
         vec_p[nsp]=p;
@@ -173,9 +242,8 @@ double one_step(double dt, double numruns, int i)
         }
     }
 
-// rescale the moments 
 
-// save the some of the values generated. 
+// save the values of the position and momentum in txt files
 string path=PATH;
 fstream file;
 file << fixed << setprecision(16) << endl;
@@ -185,7 +253,6 @@ file.open(file_name,ios_base::out);
 ostream_iterator<double> out_itr(file, "\n");
 copy(vec_q.begin(), vec_q.end(), out_itr);
 file.close();
-
 file_name=path+"/vec_noada_p"+list_para+".txt";
 file.open(file_name,ios_base::out);
 copy(vec_p.begin(), vec_p.end(), out_itr);
@@ -194,43 +261,69 @@ file.close();
 return nsp2;
 }
 
-////////////////////////////////////////////////////////
-////////// ADAPTIVE WITH ADAPTIVE STEP IN B ////////////
-////////////////////////////////////////////////////////
-
-vector<double> one_step_tr_B(double dt, double numruns, int i)
+//
+// \hat{B}\hat{A}\hat{O}\hat{A}\hat{B} 
+// or BAOAB for the IP-transformed system with correction step in B
+//
+vector<double> n_escp_tr_B(double dt, double numruns, int i)
 {
-    // ******** Try Boost
+        /*
+    This function implements the numerical integrator \hat{B}\hat{A}\hat{O}\hat{A}\hat{B}, and 
+    save the values of the chain of the position, the momentum and monitor function in a file.  
+    This function saves: 
+     - "./data/bayesian_escaping/vec_tr_B_qi=j.txt"
+     - "./data/bayesian_escaping/vec_tr_B_pi=j.txt"
+     - "./data/bayesian_escaping/vec_tr_B_gi=j.txt"
+     which are the values of the respectively of a number of numsam/printskip values of the 
+     position, the momentum and the monitor function g(q) at time T, for the stepsize at index 
+     j in the list of stepsize dtlist.
+     
+     
+    Input
+    -----
+    dt: double
+        value of the stepsize
+    numruns: double 
+        number of runs for one trajectory
+    i: int
+        the index of the stepsize in the list of stepsize dtlist
+    Return
+    ------
+    nsp2: int
+        The value of the number of of escaping trajectories. 
+    */
     random_device rd1;
     boost::random::mt19937 gen(rd1());
+    
+    // Set up variables
     double q,p,f,g,gp,gdt,C,g0,g1,g_av,g_av_sample,q0,q1,diff;
     int ns,nt,nsp,nsp2,nit;
 
-    // Savethe values 
+    // empty vector to save samples of the values of the position, momentum and monitor function
     vector<double> vec_q((numsam/printskip),0);
     vector<double> vec_p((numsam/printskip),0);
     vector<double> vec_g((numsam/printskip),0);
 
-    // save the value of g and the value of number of escaping traj
+    // An empty vector to save the value of average of monitor function 
+    // and the count of the number of escaping trajectory.
     vector<double> res_v(2,0);
 
-
-    // Initialise snapshot
+    // Set up the iterator
     nsp=0;
     nsp2=0;
     g_av_sample=0;
+
     #pragma omp parallel private(q,p,f,C,nt,gdt,gp,g,g0,g1,g_av,q0,q1,diff,nit) shared(ns,vec_q,vec_p,vec_g,nsp,nsp2,g_av_sample)
     #pragma omp for
     for(ns = 0; ns<numsam; ns++){
         g_av=0;
-        // Normal generator 
-        mt19937 generator(rd1());
-        normal_distribution<double> normal(0, 1);
-        q = 1.23;
-        p = 0.;
-        g = getg(q);
-        gdt = dt*g;
-        gp=getgprime(q);
+        mt19937 generator(rd1()); // Normal generator 
+        normal_distribution<double> normal(0, 1); // Normal generator 
+        q = 1.23; //value of the position
+        p = 0.; //value of the momentum
+        g = getg(q); //value of the monitor function
+        gdt = dt*g; 
+        gp=getgprime(q); //valeu of derivative of the monitor function
         f = -Up(q);   // force
         for(nt = 0; nt<numruns; nt++)
         {
@@ -295,9 +388,9 @@ vector<double> one_step_tr_B(double dt, double numruns, int i)
             //******************************
             g_av+=g;
         }
-    
+        // compute the number of escaping trajectories
         if (isnan(q)==true){
-		nsp2+=1;	
+		    nsp2+=1;	
 	    }
 
     //*****************************
@@ -340,38 +433,60 @@ vector<double> one_step_tr_B(double dt, double numruns, int i)
     copy(vec_g.begin(), vec_g.end(), out_itr);
     file.close();
 
-    // return the saved moments
+    // return the average value of the monitor function 
+    // and the number of escaping trajectories
     res_v[0]=nsp2;
     res_v[1]=g_av_sample/numsam;
 
     return res_v;
     }
 
-////////////////////////////////////////////////////////
-////////// ADAPTIVE WITH ADAPTIVE STEP IN O ////////////
-////////////////////////////////////////////////////////
-
-
-vector<double> one_step_tr_O(double dt, double numruns, int i)
-{
-    // ******** Try Boost
+//
+// \tilde{B}\tilde{A}\tilde{O}\tilde{A}\tilde{B} 
+// or BAOAB for the IP-transformed system with correction step in O
+//
+vector<double> n_escp_tr_O(double dt, double numruns, int i)
+{      /*
+    This function implements the numerical integrator \tilde{B}\tilde{A}\tilde{O}\tilde{A}\tilde{B}, and 
+    save the values of the chain of the position, the momentum and monitor function in a file.  
+    This function saves: 
+     - "./data/bayesian_escaping/vec_tr_O_qi=j.txt"
+     - "./data/bayesian_escaping/vec_tr_O_pi=j.txt"
+     - "./data/bayesian_escaping/vec_tr_O_gi=j.txt"
+     which are the values of the respectively of a number of numsam/printskip values of the 
+     position, the momentum and the monitor function g(q) at time T, for the stepsize at index 
+     j in the list of stepsize dtlist.
+     
+     
+    Input
+    -----
+    dt: double
+        value of the stepsize
+    numruns: double 
+        number of runs for one trajectory
+    i: int
+        the index of the stepsize in the list of stepsize dtlist
+    Return
+    ------
+    nsp2: int
+        The value of the number of of escaping trajectories. 
+    */
+   // see function n_escp_tr_B for exhaustive code commenting
     random_device rd1;
     boost::random::mt19937 gen(rd1());
     double q,p,f,g,gp,gdt,C,g0,g1,g_av,g_av_sample,diff,q0,q1;
     int ns,nt,nsp,nsp2,nit;
 
-    // Savethe values 
     vector<double> vec_q((numsam/printskip),0);
     vector<double> vec_p((numsam/printskip),0);
     vector<double> vec_g((numsam/printskip),0);
-
-    // Return the save moments
+    // an empty vector to save the value of average of monitor function 
+    // and the count of the number of escaping trajectory.
     vector<double> res_v(2,0);
 
-
-    // Initialise snapshot
     nsp=0;
     nsp2=0;
+
     g_av_sample=0;
     #pragma omp parallel private(q,p,f,C,nt,gdt,gp,g,g0,g1,g_av,q0,q1,diff,nit) shared(ns,vec_q,vec_p,vec_g,nsp,nsp2)
     #pragma omp for
@@ -508,46 +623,43 @@ int main(void) {
     auto start = high_resolution_clock::now();
     using namespace std;
     vector<double> moments_1(dtlist.size(),0);
-
-
     vector<double> moments_trB_1(dtlist.size(),0);
-
-
     vector<double> moments_trO_1(dtlist.size(),0);
 
 
     for(int i = 0; i < dtlist.size(); i++){ // run the loop for ns samples
-        cout<<"\n";
-        cout<<1;
-        cout<<"\n";
+
         double dti = dtlist[i];
         double ni = Nt;
 
         // transformed with corr in step O 
-        vector<double> res_v =one_step_tr_O(dti,ni,i);
+        vector<double> res_v =n_escp_tr_O(dti,ni,i);
         moments_trO_1[i]=res_v[0];
 
+        // Plot the average value taken by the monitor function
         cout<<"\n";
         cout<<res_v[1];
         cout<<"\n";
 
         // transformed with corr in step B 
-        res_v =one_step_tr_B(dti,ni,i);
+        res_v =n_escp_tr_B(dti,ni,i);
         moments_trB_1[i]=res_v[0];
 
         // no adaptivity 
-    
-        double res=one_step(dti*0.85,ni,i);
+        // rescale by a lower bound on the average value taken by the monitor funciton 
+        // to obtain fair comparison
+        double res=n_escp(dti*0.85,ni,i);
         moments_1[i]=res;
        
 
 
 
-       // * SAVE THE COMPUTED MOMENTS IN A FILE
-    /////////////////////////////////////////
+    //
+    // save the computed moments
+    //
     string path=PATH;
 
-    // NON ADAPTIVE
+    // Non adaptive
     fstream file;
     file << fixed << setprecision(16) << endl;
     string file_name=path+"/noada_nescaping.txt";
@@ -556,31 +668,30 @@ int main(void) {
     copy(moments_1.begin(), moments_1.end(), out_itr);
     file.close();
 
-
-    // TRANSFORMED with corr in B 
+    // Transformed with corr in B 
     file_name=path+"/tr_B_nescaping.txt";
     file.open(file_name,ios_base::out);
     copy(moments_trB_1.begin(), moments_trB_1.end(), out_itr);
     file.close();
 
 
-    // TRANSFORMED with corr in O 
+    // Transformed with corr in O 
     file_name=path+"/tr_O_nescaping.txt";
     file.open(file_name,ios_base::out);
     copy(moments_trO_1.begin(), moments_trO_1.end(), out_itr);
     file.close();
 
 
-    // * SAVE THE TIME AND PARAMETERS OF THE SIMULATION IN A INFO FILE
-    ///////////////////////////////////////////////////////////////////
+    //
+    // Save the values of the parameters 
+    //
+
     // find time by subtracting stop and start timepoints 
     auto stop = high_resolution_clock::now();
     auto duration_m = duration_cast<minutes>(stop - start);
     auto duration_s = duration_cast<seconds>(stop - start);
     auto duration_ms = duration_cast<microseconds>(stop - start);
     // save the parameters in a file info
-    // string parameters="M="+to_string(M)+"-m="+to_string(m)+"-gamma="+to_string(gamma)+"-tau="+to_string(tau)+"-a="+to_string(a)+"-b="+to_string(b)+"-x0="+to_string(x0)+"-c="+to_string(c)+"-Ns="+to_string(numsam)+"-time_sim_min="+to_string(duration_m.count())+"-time_sim_sec="+to_string(duration_s.count())+"-time_sim_ms="+to_string(duration_ms.count());
-    // string parameters="M1="+to_string(M1)+"-m1="+to_string(m1)+"-gamma="+to_string(gamma)+"-tau="+to_string(tau)+"-r="+to_string(r)+"-d="+to_string(d)+"-c="+to_string(c)+"-Ns="+to_string(numsam)+"-time_sim_min="+to_string(duration_m.count())+"-time_sim_sec="+to_string(duration_s.count())+"-time_sim_ms="+to_string(duration_ms.count());
     string parameters="M1="+to_string(M1)+"-m1="+to_string(m1)+"-gamma="+to_string(gamma)+"-tau="+to_string(tau)+"-K="+to_string(K)+"-a="+to_string(a)+"-Ns="+to_string(numsam)+"-time_sim_min="+to_string(duration_m.count())+"-time_sim_sec="+to_string(duration_s.count())+"-time_sim_ms="+to_string(duration_ms.count());
     string information=path+"/parameters_used.txt";
     file.open(information,ios_base::out);
@@ -597,419 +708,3 @@ return 0;
 
 
 
-
-
-
-
-
-
-
-
-
-
-// double getg(double x)
-// {
-//     double f,f2,xi,den,g;
-//     f=(r*(x*x*x+d*cos(d*x+1))*(x*x*x+d*cos(d*x+1)));
-//     f2=f*f;
-//     xi=sqrt(1+m1*f2);
-//     den=M1*xi+abs(f);
-//     g=xi/den;
-//     return(g);
-
-// }
-
-// double getgprime(double x)
-// {
-//     double f,f2,fp,xi,gp,signf;
-//     // if (x==0){ ;}
-//     // else{
-//     f=r*(x*x*x+d*cos(d*x+1))*(x*x*x+d*cos(d*x+1));
-//     f2=f*f;
-//     fp=r*2*(x*x*x+d*cos(d*x+1))*(3*x*x-d*d*sin(1+d*x));
-//     xi=sqrt(1+m1*f2);
-//     signf= (f > 0) - (f < 0);
-//     gp=-signf*fp/(xi*pow(M1*xi+abs(f),2));
-//     return(gp);
-// }
-
-
-
-/////////////////////// DEFINE POTENTIAL //////////////////////////////
-// #define PATH   "/home/s2133976/OneDrive/ExtendedProject/Code/Stepupyourgame/Stepupyourgame/data/C/underdamped/spring_validate/v2"
-// #define PATH "./spring_v2_gamma1"
-// vector<double> dtlist ={0.1   , 0.1444, 0.1889, 0.2333, 0.2778, 0.3222, 0.3667, 0.4111,
-//        0.4556, 0.5   };
-
-// vector<double> dtlist ={0.001, 0.012, 0.023, 0.034, 0.045, 0.056, 0.067, 0.078, 0.089,0.1 };
-// vector<double> dtlist ={0.05  , 0.1222, 0.1944, 0.2667, 0.3389, 0.4111, 0.4833, 0.5556,
-//        0.6278, 0.7 };
-// /////////////////////////////////
-// // Spring potential definition //
-// /////////////////////////////////
-// #define m               0.001
-// #define M               1.1
-// // Spring potential 
-// //parameters of the potential 
-// #define a               15.0
-// #define b               0.1
-// #define x0              0.5
-// #define c               0.1
-
-// long double Up(double x)
-// {
-//    long double xx02= (x-x0)*(x-x0);
-//    long double wx =b/(b/a+xx02);
-//     return (wx*wx+c)*x;
-// }
-
-// double getg(double x)
-// {
-//     double wx,f,xi,g;
-//     wx =(b/a+pow(x-x0,2))/b;
-//     f = wx*wx;
-//     xi = f+m;
-//     g = 1/(1/M+1/sqrt(xi));
-//     return(g);
-
-// }
-
-// double getgprime(double x)
-// {
-//     double wx,f,fp,xi,gprime;
-//     wx =(b/a+pow(x-x0,2))/b;
-//     f = wx*wx;
-//     fp = 4*(x-x0)*((b/a)+pow(x-x0,2))/(b*b);
-//     xi=sqrt(f+m*m);
-//     gprime= M*M*fp/(2*xi*(xi+M)*(xi+M));
-//     return(gprime);
-// }
-
-
-
-// /////////////////////////////////
-// // Double well
-// /////////////////////////////////
-// // vector<double> dtlist = {0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1 };  // //vector<double> dtlist = {0.001 , 0.0039, 0.005 , 0.0065, 0.0084, 0.0109, 0.014 , 0.0181,0.0234, 0.0302};
-// vector<double> dtlist ={0.05, 0.06, 0.07, 0.08, 0.09, 0.1};
-
-// #define PATH   "/home/s2133976/OneDrive/ExtendedProject/Code/Stepupyourgame/Stepupyourgame/data/C/underdamped/dw/v2"
-
-// #define a 1. // parameter of how steep the double well is 
-// #define c 0.6 //parameter that determines how high the step size goes in between well, the highest the lowest it goes 
-// #define m1    0.1
-// #define M1     1/2.
-
-// double U(double x){
-//     return ((x+a)*(x+a)-0.0001)*pow((x-c),4);
-//     }
-
-// double Up(double x){
-//     double xc =x-c;
-//     double xa=x+a;
-//     double v=2*xc*xc*xc*(xa*xc+2*xa*xa-0.0002);
-//     return v;}
-
-
-// // g depends on (x-c)^3
-// /////////////////////////////////
-
-// double getg(double x)
-// {
-//     double f,f2,xi,den,g;
-//     f=pow(x-c,3);
-//     f2=f*f;
-//     xi=sqrt(1+m1*f2);
-//     den=M1*xi+abs(f);
-//     g=xi/den;
-//     return(g);
-// }
-
-// double getgprime(double x)
-// {
-//     double xc,xa,f,f2,xi,fp,gp;
-//     f=pow(x-c,3);
-//     f2=f*f;
-//     fp=3*pow(x-c,2);
-//     xi=sqrt(1+m1*f2);
-//     gp=-f*fp/(sqrt(f2)*xi*pow(M1*xi+abs(f),2));
-//     return(gp);
-//     }
-
-// // g depends on (x-c)^32(x+a)^2
-// /////////////////////////////////
-
-
-// double getg(double x)
-// {
-//     double f,f2,xi,den,g;
-//     f=pow(x-c,3)*2*pow(x+a,2)*low;
-//     f2=f*f;
-//     xi=sqrt(1+m1*f2);
-//     den=M1*xi+abs(f);
-//     g=xi/den;
-//     return(g);
-// }
-
-// double getgprime(double x)
-// {
-//     double xc,xa,f,f2,xi,fp,gp;
-//     f=low*pow(x-c,3)*2*pow(x+a,2);
-//     f2=f*f;
-//     fp=low*(x+a)*pow(x-c,2)*(3*a-2*c+5*x)*2;
-//     xi=sqrt(1+m1*f2);
-//     gp=-f*fp/(sqrt(f2)*xi*pow(M1*xi+abs(f),2));
-//     return(gp);
-//     }
-
-
-
-
-
-// /////////////////////////////////
-// // Double well 
-
-
-// #define a 0.4
-// #define c 1.6
-
-
-// long double Up(double x)
-// {
-//     double xc =x-c;
-//     double xa=x+a;
-//     double v=2*xc*xc*xc*(xa*xc+2*xa*xa-0.0002);
-//     return v;
-// }
-
-// ///////////////////////////////////////////////////////////////
-// // with the definition 1/(1/M+1/f+m) with f=1/((x-a)^2(x+c)^3)
-// ///////////////////////////////////////////////////////////////
-// double getg(double x)
-// {
-//     double xc,xa,f,f2,xi,den,g;
-//     xc=x-c;
-//     xa=x+a;
-//     f=0.5*abs(pow(xc,3)*pow(xa,2));
-//     f2=f*f;
-//     xi=sqrt(1+m1*f2);
-//     den=M1*xi+f;
-//     g=xi/den;
-//     return(g);
-// }
-
-// double getgprime(double x)
-// {
-//     double xc,xa,f,f2,xi,fp,gp;
-//     xc=x-c;
-//     xa=x+a;
-//     f=0.5*abs(pow(xc,3)*pow(xa,2));
-//     f2=f*f;
-//     fp=0.5*pow(xa,3)*pow(xc,5)*(3*a-2*c+5*x)/abs(f);
-//     xi=sqrt(1+m1*f2);
-//     gp=-xi*xi*fp/(pow(xi,3)*pow(M1*xi+f,2));
-//     return(gp);
-//     }
-
-
-
-
-
-
-
-// /////////////////////////////////
-// // Spring potential definition //
-// /////////////////////////////////
-// // Spring potential 
-// //parameters of the potential 
-// #define a               20.0
-// #define b               0.1
-// #define x0              0.1
-// #define c               0.1
-
-// long double Up(double x)
-// {
-//    long double xx02= (x-x0)*(x-x0);
-//    long double wx =b/(b/a+xx02);
-//     return (wx*wx+c)*x;
-// }
-
-// double getg(double x)
-// {
-//     double wx,f,xi,g;
-//     wx =(b/a+pow(x-x0,2))/b;
-//     f = wx*wx;
-//     xi = f+m;
-//     g = 1/(1/M+1/sqrt(xi));
-//     return(g);
-
-// }
-
-// double getgprime(double x)
-// {
-//     double wx,f,fp,xi,gprime;
-//     wx =(b/a+pow(x-x0,2))/b;
-//     f = wx*wx;
-//     fp = 4*(x-x0)*((b/a)+pow(x-x0,2))/(b*b);
-//     xi=sqrt(f+m*m);
-//     gprime= M*M*fp/(2*xi*(xi+M)*(xi+M));
-//     return(gprime);
-// }
-
-/////////////////////////////////
-// Square definition //
-/////////////////////////////////
-
-
-// long double Up(double x)
-// {
-//    return x;
-// }
-
-// double getg(double x)
-// {
-//     return 1;
-// }
-
-// double getgprime(double x)
-// {
-//     return 0;
-// }
-
-
-
-/////////////////////////////////
-// Spring potential definition //
-/////////////////////////////////
-// Spring potential 
-//parameters of the potential 
-// #define a               1.0
-// #define b               1.0
-// #define x0              0.5
-// #define c               0.1
-// vector<double> dtlist = {exp(-4.5),exp(-4.21),exp(-3.93),exp(-3.64),exp(-3.36),exp(-3.07),exp(-2.79),exp(-2.5),exp(-2.21),exp(-1.93),exp(-1.64),exp(-1.36),exp(-1.07), exp(-0.79), exp(-0.5)};
-
-// long double Up(double x)
-// {
-//    long double xx02= (x-x0)*(x-x0);
-//    long double wx =b/(b/a+xx02);
-//     return (wx*wx+c)*x;
-// }
-
-// double getg(double x)
-// {
-//     double wx,f,xi,g;
-//     wx =(b/a+pow(x-x0,2))/b;
-//     f = wx*wx;
-//     xi = f+m;
-//     g = 1/(1/M+1/sqrt(xi));
-//     return(g);
-
-// }
-
-// double getgprime(double x)
-// {
-//     double wx,f,fp,xi,gprime;
-//     wx =(b/a+pow(x-x0,2))/b;
-//     f = wx*wx;
-//     fp = 4*(x-x0)*((b/a)+pow(x-x0,2))/(b*b);
-//     xi=sqrt(f+m*m);
-//     gprime= M*M*fp/(2*xi*(xi+M)*(xi+M));
-//     return(gprime);
-// }
-
-
-// ////////////////////////////////////////////////////////////////////////////////////////////
-// ////////////// POTENTIAL x^4+sin(1+dx)
-// ///////////////////////////////////////////////////////////////
-
-// // #define PATH "./validate/spring_v2"
-// #define PATH   "/home/s2133976/OneDrive/ExtendedProject/Code/Stepupyourgame/Stepupyourgame/data/C/underdamped/spring_validate/v2";
-
-// vector<double> dtlist = {0.37,0.3456,0.3211,0.2967,0.2722,0.2478,0.2233,0.1989,0.1744,0.15};
-// #define r     0.05
-// #define d     5.
-// #define m1    .001
-// #define M1     1/1.
-// #define c       0.5
-
-// double Up(double x)
-// {
-//     double res = x*x*x+d*cos(1+d*x);
-//     return res;
-// }
-
-
-// double getg(double x)
-// {
-//     double f,f2,xi,den,g;
-//     f=r*pow(x,4);
-//     f2=f*f;
-//     xi=sqrt(1+m1*f2);
-//     den=M1*xi+abs(f);
-//     g=xi/den;
-//     return(g);
-// }
-
-// double getgprime(double x)
-// {
-//     double f,f2,xi,fp,gp,signf;
-//     f=r*pow(x,4);
-//     f2=f*f;
-//     fp=4*x*x*x*r;
-//     xi=sqrt(1+m1*f2);
-//     signf= (f > 0) - (f < 0);
-//     gp=-signf*fp/(xi*pow(M1*xi+abs(f),2));
-//     return(gp);
-//     }
-
-
-// /////////////////////////////////
-// // Spring potential definition //
-// /////////////////////////////////
-// #define PATH   "/home/s2133976/OneDrive/ExtendedProject/Code/Stepupyourgame/Stepupyourgame/data/C/underdamped/spring_validate/v1"
-// // #define PATH "./spring_a4_gamma01"
-// // FOR A=4
-// vector<double> dtlist ={0.7 , 0.63, 0.56,0.48,0.41,0.34,0.27, 0.19, 0.12, 0.05};
-
-// // FOR A =15
-// //larger range of values 
-// //vector<double> dtlist = {0.1  , 0.14 , 0.195,0.273, 0.38 , 0.531, 0.741, 1.034, 1.443, 2.014};
-// //vector<double> dtlist = {2.014,1.443,1.034,0.741,0.531,0.38,0.273,0.195,0.14,0.1};
-
-// #define m               0.001
-// #define M               1.1
-// // Spring potential -- parameters of the potential 
-// #define a               2.75
-// #define b               0.1
-// #define x0              0.5
-// #define c               0.1
-
-// long double Up(double x)
-// {
-//    long double xx02= (x-x0)*(x-x0);
-//    long double wx =b/(b/a+xx02);
-//     return (wx*wx+c)*x;
-// }
-
-// double getg(double x)
-// {
-//     double wx,f,xi,g;
-//     wx =(b/a+pow(x-x0,2))/b;
-//     f = wx*wx;
-//     xi = f+m*m;
-//     g = 1/(1/M+1/sqrt(xi));
-//     return(g);
-
-// }
-
-// double getgprime(double x)
-// {
-//     double wx,f,fp,xi,gprime;
-//     wx =(b/a+pow(x-x0,2))/b;
-//     f = wx*wx;
-//     fp = 4*(x-x0)*((b/a)+pow(x-x0,2))/(b*b);
-//     xi=sqrt(f+m*m);
-//     gprime= M*M*fp/(2*xi*(xi+M)*(xi+M));
-//     return(gprime);
-// }

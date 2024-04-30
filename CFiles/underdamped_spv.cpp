@@ -1,8 +1,22 @@
-// Spring potential 
-// v2 implies BAOAB with \nabla g computed in step O
-// AND fixed point integration for step A
+/* This code produces results on the accuracy results found in figure 8. It implements the 
+   IP-transformed underdamped Langevin dynamic with the two numerical integration methods. 
+   It uses the numerical method: \tilde{B}\tilde{A}\tilde{O}\tilde{A}\tilde{B} and the method 
+    \hat{B}\hat{A}\hat{O}\hat{A}\hat{B}.
+   To run the code, install fopenmp as per Readme instructions.
+   This code contains: 
+   - Definition of fixed parameters
+   - Definition of the functions: 
+        * Up: the derivative of the potential defined in (2.1) 
+        * getg: the monitor function defined in (3.1)
+        * getgprime: the derivative of the above monitor function 
+        * num_int_spv: numerical integrator method of spv
+        * num_int_tr: numerical integrator method of SPV on IP transformed system of SDE
+        * main: run the algorithms and save the results of the moments
+*/
 
-
+//
+// Include required packages 
+//
 
 #include <cstring>
 #include <stdio.h>
@@ -21,67 +35,79 @@
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/multi_array.hpp>
 #include <chrono>
-
 using namespace std::chrono;
- 
 using namespace std;
 
 
-// #define gamma           0.1            // friction coefficient
-// #define tau             1.            // 'temperature'
-// #define Tf              40000         // Number of steps forward in time
-// #define numsam          1000       // total number of trajectories
-// #define printskip       100		// skip this number when saving final values of the vector (should be high as we can't save 10^7 traj) vector
-// #define printskip2	    100		// use every printskip2 val in a trajectory for the computation of the observable, burnin is 10 000
-// #define defnburnin      10000   // number of values to skip before saving observable
-// #define tolA            0.00000000001
-// #define nmax            100
-
+//
+// Defined fixed parameters 
+//
 #define gamma           0.1            // friction coefficient
 #define tau             1.            // 'temperature'
 #define Tf              40000         // Number of steps forward in time
-#define numsam          100000       // total number of trajectories
+#define numsam          100 //000       // total number of trajectories
 #define printskip       100		// skip this number when saving final values of the vector (should be high as we can't save 10^7 traj) vector
 #define printskip2	    100		// use every printskip2 val in a trajectory for the computation of the observable, burnin is 10 000
 #define defnburnin      10000   // number of values to skip before saving observable
 #define tolA            1e-16
 #define nmax            100
 
-///////////////////// DEFINE POTENTIAL //////////////////////////////
+//
+// Modified harmonic potential parameters 
+//
 
-/////////////////////////////////
-// Spring potential definition //
-/////////////////////////////////
-#define PATH     "/home/s2133976/OneDrive/ExtendedProject/Code/Stepupyourgame/Stepupyourgame/data/C/underdamped/investigate/spv"
-//#0.6  , 0.555, 0.51 , 0.465, 0.42 , 0.375, 0.333, 
-// vector<double> dtlist = {0.306, 0.28 ,0.265, 0.253, 0.227, 0.2 };
+// where we save the moments generated
+#define PATH   "./data/underdamped_accuracy_spv"
 vector<double> dtlist = {0.202, 0.216, 0.231, 0.247, 0.264, 0.282, 0.301, 0.322, 0.344,0.368};
 
-#define m               .1
-#define M               1.1
-#define m1              m*m
-#define M1              1/M
-// Spring potential -- parameters of the potential 
+#define m               .1              //define the lower bound of the monitor function
+#define M               1.1             //define the upper bound of the monitor function
 #define a               2.75
 #define b               0.1
 #define x0              0.5
 #define c               0.1
 
+//
+// Modified harmonic potential parameters 
+//
+
 long double Up(double x)
 {
+    /*
+    Defined the derivative of the modified harmonic potential (2.1):
+        F(x)=-V'(x) = (\omega(x)^2+c)x,\text{ with } \omega(x) = \frac{b}{\frac{b}{a}+(x-x_0)^2},
+
+    Input
+    -----
+    x: double 
+        value of the position
+
+    Return
+    ------
+    U'(x): double
+        value of the derivative of the potential in x.
+    */
    long double xx02= (x-x0)*(x-x0);
    long double wx =b/(b/a+xx02);
     return (wx*wx+c)*x;
 }
 
 
-/////////////////////////////////////////////////////
-/////////////////////////////////////////////////////
-/////////////////////////////////////////////////////
-/// Try different G 
-/////////////////////////////////////////////////////
 double getg(double x)
 {
+    /*
+    Defined the monitor function based on (3.1) using the choice of g_3. 
+    
+    Input
+    -----
+    x: double 
+        value of the position
+
+    Return
+    ------
+    g(x): double
+        value of the monitor function in x.
+    */
     double wx,f,xi,g;
     wx =(b/a+pow(x-x0,2.))/b;
     f = wx*wx;
@@ -93,6 +119,19 @@ double getg(double x)
 
 double getgprime(double x)
 {
+    /*
+    Defines the derivative of the monitor function based on (3.1) using the choice of g_3. 
+    
+    Input
+    -----
+    x: double 
+        value of the position
+
+    Return
+    ------
+    g'(x): double
+        value of the derivative of the monitor function in x.
+    */
     double wx,f,fp,xi,gprime;
     wx =(b/a+pow(x-x0,2.))/b;
     f = wx*wx;
@@ -102,17 +141,44 @@ double getgprime(double x)
     return(gprime);
 }
 
-
-
-
-
-
-/////////////////////////////////
-// Non adaptive one step function //
-/////////////////////////////////
-
-vector<double> one_step(double dt, double numruns, double nburnin,int i,int dN)
+//
+// Numerical integrator spv for the system (1.1)
+//
+vector<double> num_int_spv(double dt, double numruns, double nburnin,int i,int dN)
 {
+        /*
+    This function implements the numerical integrator spv, and save the values of the chain 
+    of the position and the momentum in a file "data/vec_noada_qi=j.txt" and "data/vec_noada_pi=j.txt"
+    where j is the index of the stepsize used to obtain the samples in the list 
+    dtlist. This function saves: 
+     - "./data/underdamped_accuracy_spv/vec_noada_qi=j.txt"
+     - "./data/underdamped_accuracy_spv/vec_noada_pi=j.txt"
+     which are the values of the respectively of a number of numsam/printskip values of the 
+     position and the momentum at time T, for the stepsize at index j in the list of stepsize
+     dtlist.
+
+     
+
+    Input
+    -----
+    dt: double
+        value of the stepsize
+    numruns: double 
+        number of runs for one trajectory
+    nburnin: double
+        the number of steps to skip before saving values to compute the moments
+    i: int
+        the index of the stepsize in the list of stepsize dtlist
+    dN: int
+        the number of values to skip in the chain before saving a value of the 
+        sample to compute the moments
+    
+    Return
+    ------
+    moments: vector<double> of size (4,1)
+        A vector of size 4 where we save the values of the computed first, second
+        third and fourth moments. 
+    */
     //tools for sampling random increments
     random_device rd1;
     boost::random::mt19937 gen(rd1());
@@ -202,12 +268,44 @@ file.close();
 return moments;
 }
 
-////////////////////////////////////////////////////////
-////////// ADAPTIVE WITH ADAPTIVE STEP IN B ////////////
-////////////////////////////////////////////////////////
-
-vector<double> one_step_tr(double dt, double numruns,double nburnin, int i,int dN)
+//
+// SPV for IP-transformed
+//
+//
+vector<double> num_int_tr(double dt, double numruns,double nburnin, int i,int dN)
 {
+       /*
+    This function implements the numerical integrator SPV for the IP transformed system of SDE, 
+    and save the values of the chain of the position, the momentum and monitor function in a file.  
+    This function saves: 
+     - "./data/underdamped_accuracy_spv/vec_tr_B_qi=j.txt"
+     - "./data/underdamped_accuracy_spv/vec_tr_B_pi=j.txt"
+     - "./data/underdamped_accuracy_spv/vec_tr_B_gi=j.txt"
+     which are the values of the respectively of a number of numsam/printskip values of the 
+     position, the momentum and the monitor function g(q) at time T, for the stepsize at index 
+     j in the list of stepsize dtlist.
+     
+     
+    Input
+    -----
+    dt: double
+        value of the stepsize
+    numruns: double 
+        number of runs for one trajectory
+    nburnin: double
+        the number of steps to skip before saving values to compute the moments
+    i: int
+        the index of the stepsize in the list of stepsize dtlist
+    dN: int
+        the number of values to skip in the chain before saving a value of the 
+        sample to compute the moments
+    
+    Return
+    ------
+    moments: vector<double> of size (4,1)
+        A vector of size 4 where we save the values of the computed first, second
+        third and fourth moments. 
+    */
     // ******** Try Boost
     random_device rd1;
     boost::random::mt19937 gen(rd1());
@@ -263,7 +361,6 @@ vector<double> one_step_tr(double dt, double numruns,double nburnin, int i,int d
             gp=getgprime(q);
             C = exp(-gdt*gamma);
             p = C*p+f*(1.-C)/gamma+sqrt((1.-C*C)*tau)*normal(generator)+(1.-C)*tau*gp/(gamma*g) ;
-            //p = C*p+(f+gp*tau/g)*(1-C)/gamma+sqrt((1.-C*C)*tau)*normal(generator);
 
             //**********
             //* STEP Q *
@@ -361,7 +458,38 @@ vector<double> one_step_tr(double dt, double numruns,double nburnin, int i,int d
 
 
 int main(void) {    
+ /*
+    This function loops through the values of the stepsize in the list of stepsize dtlist
+    and run the numerical integrators spv, and SPV onto IP transformed SDE.
+    It takes the list of moments generated by each functions and save the moments in files for each numerical integrator.  
+    This function saves: 
+     - "./data/underdamped_accuracy_spv/noada_moment1.txt"
+     - "./data/underdamped_accuracy_spv/noada_moment2.txt"
+     - "./data/underdamped_accuracy_spv/noada_moment3.txt"
+     - "./data/underdamped_accuracy_spv/noada_moment4.txt"
+    which are the values of the first, second, third and fourth moments for the spv method, 
+    for each stepsize in the list dtlist. 
+     - "./data/underdamped_accuracy_spv/moments_trB_1.txt"
+     - "./data/underdamped_accuracy_spv/moments_trB_2.txt"
+     - "./data/underdamped_accuracy_spv/moments_trB_3.txt"
+     - "./data/underdamped_accuracy_spv/moments_trB_4.txt"
+    which are the values of the first, second, third and fourth moments for the modified SPV method 
+    applied to the IP-transformed underdamped system.
+     - "./data/underdamped_accuracy_spv/vec_g_B.txt"
+     which saves the average values taken by the monitor functions accross all samples for each chains. 
+     It provides an estimate of the computational effort required to run the numerical methods for 
+     the IP-transformed numerical methods. 
+     - "./data/underdamped_accuracy_spv/parameters_used.txt"
+     provides a list of the parameters used for the simulation as well as the time required to obtain those results. 
 
+    Input
+    -----
+    void
+    
+    Return
+    ------
+    void
+    */
     // Compute how much time it takes
     auto start = high_resolution_clock::now();
     using namespace std;
@@ -389,16 +517,16 @@ int main(void) {
         double nburnin = defnburnin;
         double dN=printskip;
        
-        // no adaptivity 
-        vector<double> moments_di=one_step(dti,ni,nburnin,i,dN);
+        // SPV no adaptivity 
+        vector<double> moments_di=num_int_spv(dti,ni,nburnin,i,dN);
         moments_1[i]=moments_di[0];
         moments_2[i]=moments_di[1];
         moments_3[i]=moments_di[2];
         moments_4[i]=moments_di[3];
 
 
-        // transformed with corr in step B 
-        moments_di=one_step_tr(dti,ni,nburnin,i,dN);
+        // transformed SPV 
+        moments_di=num_int_tr(dti,ni,nburnin,i,dN);
         moments_trB_1[i]=moments_di[0];
         moments_trB_2[i]=moments_di[1];
         moments_trB_3[i]=moments_di[2];
