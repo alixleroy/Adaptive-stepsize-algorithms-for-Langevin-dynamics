@@ -2,7 +2,7 @@
 Code to reproduce results from: 
 A. Leroy, B. Leimkuhler, J. Latz and D. Higham, Adaptive stepsize algorithms for Langevin dynamics, 2024, https://arxiv.org/abs/2403.11993.
 
-<video src='https://github.com/alixleroy/Adaptive-stepsize-algorithms-for-Langevin-dynamics/blob/main/video_q_g.gif' width=180/>
+![](https://github.com/alixleroy/Adaptive-stepsize-algorithms-for-Langevin-dynamics/blob/main/video_q_g.gif)
 
   
 This folder contains Jupyter Notebook that allows the user to generate the results and/or plot the results from the paper. Each notebooks contain the instructions to reproduce the results.
