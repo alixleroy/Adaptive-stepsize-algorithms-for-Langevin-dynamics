@@ -358,7 +358,6 @@ vector<double> num_int_hat_baoab(double dt, double numruns,double nburnin, int i
             //* STEP A *
             //**********
             q0=q;
-            q1=q0+dt/2.*p*getg(q0);
             diff=1.;
             nit=0;
             while (nit<nmax && diff>tolA){
@@ -381,7 +380,6 @@ vector<double> num_int_hat_baoab(double dt, double numruns,double nburnin, int i
             //* STEP A *
             //**********
             q0=q;
-            q1=q0+dt/2.*p*getg(q0);
             diff=1.;
             nit=0;
             while (nit<nmax && diff>tolA){
@@ -557,7 +555,6 @@ vector<double> num_int_tilde_baoab(double dt, double numruns,double nburnin, int
             //* STEP A *
             //**********
             q0=q;
-            q1=q0+dt/2.*p*getg(q0);
             diff=1.;
             nit=0;
             while (nit<nmax && diff>tolA){
@@ -581,7 +578,6 @@ vector<double> num_int_tilde_baoab(double dt, double numruns,double nburnin, int
             //* STEP A *
             //**********
             q0=q;
-            q1=q0+dt/2.*p*getg(q0);
             diff=1.;
             nit=0;
             while (nit<nmax && diff>tolA){
