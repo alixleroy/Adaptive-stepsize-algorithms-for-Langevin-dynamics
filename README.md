@@ -2,6 +2,9 @@
 Code to reproduce results from: 
 A. Leroy, B. Leimkuhler, J. Latz and D. Higham, Adaptive stepsize algorithms for Langevin dynamics, 2024, https://arxiv.org/abs/2403.11993.
 
+<video src='https://github.com/alixleroy/Adaptive-stepsize-algorithms-for-Langevin-dynamics/blob/main/video_q_g.gif' width=180/>
+
+  
 This folder contains Jupyter Notebook that allows the user to generate the results and/or plot the results from the paper. Each notebooks contain the instructions to reproduce the results.
 
 Please note that the results from 2.MotivatingExample.ipynb and 6.Numericalexperiments.ipynb require extremely large simulations. In practice, those simulations have been run on the ECDF Linux Compute Cluster. However, the user can still reproduce results of lesser quality by decreasing the number of samples. The work used the ECDF Linux Compute Cluster, see Edinburgh Compute and Data Facility web site. 29 April 2024. U of Edinburgh <www.ecdf.ed.ac.uk>.
