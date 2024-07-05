@@ -2,8 +2,11 @@
 Code to reproduce results from: 
 A. Leroy, B. Leimkuhler, J. Latz and D. Higham, Adaptive stepsize algorithms for Langevin dynamics, 2024, https://arxiv.org/abs/2403.11993.
 
+We discuss the design of an invariant measure-preserving (IP) transformation for the numerical treatment of Langevin dynamics based on a rescaling of time, with the goal of sampling from an invariant measure. In the example below, we present samples from our IP-transformed dynamics and the original dynamics, alongside the monitor function which adapt the stepsize for the example introduced in Sect. 2 of the paper.
+
 ![](https://github.com/alixleroy/Adaptive-stepsize-algorithms-for-Langevin-dynamics/blob/main/video_q_g.gif)
 
+Given an appropriate monitor function which characterizes the numerical difficulty of the problem as a function of the state of the system, this method allows stepsizes to be reduced only when necessary, facilitating efficient recovery of long-time behavior.
   
 This folder contains Jupyter Notebook that allows the user to generate the results and/or plot the results from the paper. Each notebooks contain the instructions to reproduce the results.
 
