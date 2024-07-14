@@ -343,7 +343,6 @@ vector<double> num_int_tr(double dt, double numruns,double nburnin, int i,int dN
             //* STEP Q *
             //**********
             q0=q;
-            q1=q0+dt/2.*p*getg(q0);
             diff=1.;
             nit=0;
             while (nit<nmax && diff>tolA){
@@ -366,7 +365,6 @@ vector<double> num_int_tr(double dt, double numruns,double nburnin, int i,int dN
             //* STEP Q *
             //**********
             q0=q;
-            q1=q0+dt/2.*p*getg(q0);
             diff=1.;
             nit=0;
             while (nit<nmax && diff>tolA){
