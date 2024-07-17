@@ -47,6 +47,8 @@ using namespace std;
 // Defined fixed parameters 
 //
 
+// The parameters of the monitor function are r=1 and alpha=2
+
 #define m               0.001           // lower bound for the monitor function
 #define M               1.5             // upper bound for the monitor function
 #define numsam          100000          // number of sample

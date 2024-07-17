@@ -47,6 +47,8 @@ using namespace std;
 // Defined fixed parameters 
 //
 
+// The parameters of the monitor function are r=1 and alpha=2
+
 #define m               0.2            // minimum step scale factor
 #define M               1.             // maximum step scale factor
 #define numsam          1              // number of sample

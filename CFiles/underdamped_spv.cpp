@@ -42,6 +42,9 @@ using namespace std;
 //
 // Defined fixed parameters 
 //
+
+// The parameters of the monitor function are r=1 and alpha=2
+
 #define gamma           0.1            // friction coefficient
 #define tau             1.            // 'temperature'
 #define Tf              40000         // Number of steps forward in time
